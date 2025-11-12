@@ -11,6 +11,7 @@
 
 import asyncio
 import os
+from datetime import datetime, timedelta, timezone
 from asyncio import Task
 from typing import Dict, List, Optional, Tuple
 
@@ -35,6 +36,8 @@ from .client import BaiduTieBaClient
 from .field import SearchNoteType, SearchSortType
 from .help import TieBaExtractor
 from .login import BaiduTieBaLogin
+
+CHINA_TZ = timezone(timedelta(hours=8))
 
 
 class TieBaCrawler(AbstractCrawler):
@@ -146,11 +149,20 @@ class TieBaCrawler(AbstractCrawler):
             config.CRAWLER_MAX_NOTES_COUNT = tieba_limit_count
         start_page = config.START_PAGE
         for keyword in config.KEYWORDS.split(","):
+            keyword = keyword.strip()
+            if not keyword:
+                continue
             source_keyword_var.set(keyword)
             utils.logger.info(
                 f"[BaiduTieBaCrawler.search] Current search keyword: {keyword}"
             )
+            latest_keyword_create_time = await tieba_store.get_latest_note_create_time(keyword)
+            if latest_keyword_create_time is not None:
+                utils.logger.info(
+                    f"[BaiduTieBaCrawler.search] Latest stored create_time for '{keyword}': {latest_keyword_create_time}"
+                )
             page = 1
+            keyword_time_limited = False
             while (
                 page - start_page + 1
             ) * tieba_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
@@ -179,9 +191,47 @@ class TieBaCrawler(AbstractCrawler):
                     utils.logger.info(
                         f"[BaiduTieBaCrawler.search] Note list len: {len(notes_list)}"
                     )
-                    await self.get_specified_notes(
-                        note_id_list=[note_detail.note_id for note_detail in notes_list]
-                    )
+                    note_id_list: List[str] = []
+                    for note_detail in notes_list:
+                        publish_timestamp = utils.datetime_str_to_timestamp(
+                            note_detail.publish_time, fmt="%Y-%m-%d %H:%M"
+                        )
+                        if publish_timestamp is None:
+                            utils.logger.warning(
+                                f"[BaiduTieBaCrawler.search] Failed to parse publish_time '{note_detail.publish_time}' for note {note_detail.note_id}"
+                            )
+                        else:
+                            if (
+                                latest_keyword_create_time is not None
+                                and publish_timestamp < latest_keyword_create_time
+                            ):
+                                utils.logger.info(
+                                    f"[BaiduTieBaCrawler.search] Keyword '{keyword}' reached stored data boundary at create_time {publish_timestamp} "
+                                    f"(last stored {latest_keyword_create_time})."
+                                )
+                                keyword_time_limited = True
+                                break
+                            if (
+                                config.TIEBA_END_HOUR
+                                and datetime.now(CHINA_TZ) - datetime.fromtimestamp(publish_timestamp, tz=CHINA_TZ)
+                                > timedelta(hours=config.TIEBA_END_HOUR)
+                            ):
+                                utils.logger.info(
+                                    f"[BaiduTieBaCrawler.search] 时间截止： {note_detail.publish_time}"
+                                )
+                                keyword_time_limited = True
+                                break
+                        note_id_list.append(note_detail.note_id)
+
+                    if note_id_list:
+                        await self.get_specified_notes(note_id_list=note_id_list)
+                    else:
+                        utils.logger.info(
+                            f"[BaiduTieBaCrawler.search] No new notes to fetch for keyword '{keyword}' on page {page}"
+                        )
+
+                    if keyword_time_limited:
+                        break
                     
                     # Sleep after page navigation
                     await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
@@ -193,6 +243,8 @@ class TieBaCrawler(AbstractCrawler):
                         f"[BaiduTieBaCrawler.search] Search keywords error, current page: {page}, current keyword: {keyword}, err: {ex}"
                     )
                     break
+            if keyword_time_limited:
+                continue
 
     async def get_specified_tieba_notes(self):
         """

@@ -24,6 +24,7 @@ class TiebaNote(BaseModel):
     desc: str = Field(default="", description="帖子描述")
     note_url: str = Field(..., description="帖子链接")
     publish_time: str = Field(default="", description="发布时间")
+    create_time: Optional[int] = Field(default=None, description="发布时间时间戳")
     user_link: str = Field(default="", description="用户主页链接")
     user_nickname: str = Field(default="", description="用户昵称")
     user_avatar: str = Field(default="", description="用户头像地址")

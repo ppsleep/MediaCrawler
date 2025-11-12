@@ -15,7 +15,8 @@
 
 import asyncio
 import os
-# import random  # Removed as we now use fixed config.CRAWLER_MAX_SLEEP_SEC intervals
+import random
+from datetime import datetime, timedelta
 from asyncio import Task
 from typing import Dict, List, Optional, Tuple
 
@@ -142,9 +143,17 @@ class WeiboCrawler(AbstractCrawler):
             return
 
         for keyword in config.KEYWORDS.split(","):
+            keyword = keyword.strip()
+            if not keyword:
+                continue
             source_keyword_var.set(keyword)
             utils.logger.info(f"[WeiboCrawler.search] Current search keyword: {keyword}")
+            latest_keyword_create_time = await weibo_store.get_latest_note_create_time(keyword)
+            print(latest_keyword_create_time)
+            if latest_keyword_create_time is not None:
+                utils.logger.info(f"[WeiboCrawler.search] Latest stored create_time for '{keyword}': {latest_keyword_create_time}")
             page = 1
+            keyword_time_limited = False
             while (page - start_page + 1) * weibo_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
                 if page < start_page:
                     utils.logger.info(f"[WeiboCrawler.search] Skip page: {page}")
@@ -158,9 +167,44 @@ class WeiboCrawler(AbstractCrawler):
                     if note_item:
                         mblog: Dict = note_item.get("mblog")
                         if mblog:
-                            note_id_list.append(mblog.get("id"))
-                            await weibo_store.update_weibo_note(note_item)
+                            created_at_str = mblog.get("created_at")
+                            created_at_ts = None
+                            created_at_dt = None
+                            if created_at_str:
+                                try:
+                                    created_at_ts = utils.rfc2822_to_timestamp(created_at_str)
+                                except Exception as err:
+                                    utils.logger.warning(f"[WeiboCrawler.search] Failed to convert created_at '{created_at_str}' to timestamp: {err}")
+                                try:
+                                    created_at_dt = datetime.strptime(created_at_str, "%a %b %d %H:%M:%S %z %Y")
+                                except ValueError as err:
+                                    utils.logger.warning(f"[WeiboCrawler.search] Failed to parse created_at '{created_at_str}': {err}")
+
+                                if latest_keyword_create_time is not None and created_at_ts is not None and created_at_ts < latest_keyword_create_time:
+                                    utils.logger.info(
+                                        f"[WeiboCrawler.search] Keyword '{keyword}' reached stored data boundary at create_time {created_at_ts} "
+                                        f"(last stored {latest_keyword_create_time})."
+                                    )
+                                    keyword_time_limited = True
+                                    break
+
+                                if created_at_dt and datetime.now(created_at_dt.tzinfo) - created_at_dt > timedelta(hours=config.WEIBO_END_HOUR):
+                                    utils.logger.info(f"时间截止： {created_at_str}")
+                                    keyword_time_limited = True
+                                    break
+
+                            note_id = mblog.get("id")
+                            if keyword_time_limited or not note_id:
+                                continue
+                            note_id_list.append(note_id)
+                            sleep_duration = random.uniform(1, 3)
+                            await asyncio.sleep(sleep_duration)
+                            note_detail = await self.wb_client.get_note_info_by_id(note_id)
+                            await weibo_store.update_weibo_note(note_detail)
                             await self.get_note_images(mblog)
+
+                if keyword_time_limited:
+                    break
 
                 page += 1
                 

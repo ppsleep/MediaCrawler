@@ -316,6 +316,7 @@ class TiebaNote(Base):
     desc = Column(Text)
     note_url = Column(Text)
     publish_time = Column(String(255), index=True)
+    create_time = Column(BigInteger, index=True)
     user_link = Column(Text, default='')
     user_nickname = Column(Text, default='')
     user_avatar = Column(Text, default='')
