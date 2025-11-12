@@ -10,9 +10,15 @@
 
 
 # -*- coding: utf-8 -*-
-from typing import List
+from typing import List, Optional
 
-from model.m_baidu_tieba import TiebaComment, TiebaCreator, TiebaNote
+import config
+from sqlalchemy import select
+
+from model.m_baidu_tieba import TiebaComment, TiebaCreator, TiebaNote as TiebaNoteData
+from database.db_session import get_session
+from database.models import TiebaNote as TiebaNoteOrm
+from tools import utils
 from var import source_keyword_var
 
 from ._store_impl import *
@@ -36,7 +42,31 @@ class TieBaStoreFactory:
         return store_class()
 
 
-async def batch_update_tieba_notes(note_list: List[TiebaNote]):
+async def get_latest_note_create_time(source_keyword: str) -> Optional[int]:
+    """
+    获取指定关键词最新一条 tieba note 的 create_time
+    """
+    if not source_keyword:
+        return None
+
+    if config.SAVE_DATA_OPTION not in {"db", "sqlite"}:
+        return None
+
+    async with get_session() as session:
+        if session is None:
+            return None
+        stmt = (
+            select(TiebaNoteOrm.create_time)
+            .where(TiebaNoteOrm.source_keyword == source_keyword)
+            .order_by(TiebaNoteOrm.create_time.desc())
+            .limit(1)
+        )
+        result = await session.execute(stmt)
+        latest_create_time = result.scalar_one_or_none()
+        return int(latest_create_time) if latest_create_time is not None else None
+
+
+async def batch_update_tieba_notes(note_list: List[TiebaNoteData]):
     """
     Batch update tieba notes
     Args:
@@ -51,7 +81,7 @@ async def batch_update_tieba_notes(note_list: List[TiebaNote]):
         await update_tieba_note(note_item)
 
 
-async def update_tieba_note(note_item: TiebaNote):
+async def update_tieba_note(note_item: TiebaNoteData):
     """
     Add or Update tieba note
     Args:
@@ -62,6 +92,9 @@ async def update_tieba_note(note_item: TiebaNote):
     """
     note_item.source_keyword = source_keyword_var.get()
     save_note_item = note_item.model_dump()
+    publish_timestamp = utils.datetime_str_to_timestamp(note_item.publish_time, fmt="%Y-%m-%d %H:%M")
+    if publish_timestamp is not None:
+        save_note_item["create_time"] = publish_timestamp
     save_note_item.update({"last_modify_ts": utils.get_current_timestamp()})
     utils.logger.info(f"[store.tieba.update_tieba_note] tieba note: {save_note_item}")
 

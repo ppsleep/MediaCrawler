@@ -10,6 +10,7 @@
 
 # 贴吧平台配置
 
+TIEBA_END_HOUR = 48
 # 指定贴吧ID列表
 TIEBA_SPECIFIED_ID_LIST = []
 

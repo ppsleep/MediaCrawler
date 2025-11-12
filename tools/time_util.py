@@ -16,6 +16,7 @@
 
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 
 def get_current_timestamp() -> int:
@@ -87,6 +88,25 @@ def get_unix_time_from_time_str(time_str):
 
 def get_unix_timestamp():
     return int(time.time())
+
+def datetime_str_to_timestamp(time_str: str, fmt: str = "%Y-%m-%d %H:%M", tz_offset_hours: int = 8) -> Optional[int]:
+    """
+    Convert datetime string to unix timestamp.
+    Args:
+        time_str: datetime string.
+        fmt: datetime format.
+        tz_offset_hours: timezone offset in hours (default +8 for China).
+    Returns:
+        Unix timestamp in seconds, or None if parsing fails.
+    """
+    if not time_str:
+        return None
+    try:
+        dt_object = datetime.strptime(time_str.strip(), fmt)
+        dt_with_tz = dt_object.replace(tzinfo=timezone(timedelta(hours=tz_offset_hours)))
+        return int(dt_with_tz.timestamp())
+    except Exception:
+        return None
 
 
 def rfc2822_to_china_datetime(rfc2822_time):

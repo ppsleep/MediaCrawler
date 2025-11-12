@@ -14,9 +14,15 @@
 # @Desc    :
 
 import re
-from typing import List
+from typing import List, Optional
+
+import config
+
+from sqlalchemy import select
 
 from var import source_keyword_var
+from database.db_session import get_session
+from database.models import WeiboNote
 
 from .weibo_store_media import *
 from ._store_impl import *
@@ -37,6 +43,34 @@ class WeibostoreFactory:
         if not store_class:
             raise ValueError("[WeibotoreFactory.create_store] Invalid save option only supported csv or db or json or sqlite or mongodb ...")
         return store_class()
+
+
+async def get_latest_note_create_time(source_keyword: str) -> Optional[int]:
+    """
+    获取指定关键词最新一条微博的 create_time
+    Args:
+        source_keyword: 关键词
+    Returns:
+        最新 create_time，若无记录返回 None
+    """
+    if not source_keyword:
+        return None
+
+    if config.SAVE_DATA_OPTION not in {"db", "sqlite"}:
+        return None
+
+    async with get_session() as session:
+        if session is None:
+            return None
+        stmt = (
+            select(WeiboNote.create_time)
+            .where(WeiboNote.source_keyword == source_keyword)
+            .order_by(WeiboNote.create_time.desc())
+            .limit(1)
+        )
+        result = await session.execute(stmt)
+        latest_create_time = result.scalar_one_or_none()
+        return int(latest_create_time) if latest_create_time is not None else None
 
 
 async def batch_update_weibo_notes(note_list: List[Dict]):
